@@ -1,0 +1,241 @@
+# dApp Library
+
+A complete tutorial on how to deploy a dApp can be found on the [OpenRAN Gym website](https://openrangym.com/tutorials/dapps-oai). Please refer to that guide to instrument your system.
+
+## Installation
+
+### Prerequisite: libe3
+
+All **E3AP** operations (transport, setup handshake, subscribe, indication/control
+framing, and the ASN.1/JSON/Protobuf wire encoding) are handled by
+[**libe3**](https://github.com/wineslab/libe3); this library keeps only the
+**E3SM** (service-model) encode/decode in Python — the same split OAI uses on the
+RAN side. Install libe3 once, like any other library (it asks for `sudo`), at the
+same version as the `libe3py` this package pulls in:
+
+```bash
+git clone --branch 0.2.3 https://github.com/wineslab/libe3 && cd libe3
+./build_libe3 -I                          # build dependencies, once
+./build_libe3 --all-encodings --install   # -> /usr/local
+```
+
+Its Python binding, `libe3py`, is a dependency of this package: pip builds it
+against the installed libe3 when you install the dApp library, in any virtual
+environment and without `sudo`.
+
+The dApp's `--link` / `--transport` / `--encoding` must match the gNB's
+`E3Configuration`. See [libe3's `swig/README.md`](https://github.com/wineslab/libe3/blob/main/swig/README.md)
+for the binding architecture.
+
+#### Latency recording (optional)
+
+Per-stage latency records (latrec) come from libe3 itself: install libe3 with
+`--cmake-opt "-DLIBE3_ENABLE_LATREC=ON"`, then rebuild the binding
+(`pip install --force-reinstall --no-cache-dir libe3py`), and the dApp stamps its E3SM decode,
+processing, output creation, E3SM encode and xApp-policy apply stages into libe3's
+rings, joinable with libe3's own by `tools/latrec2csv.py`. There is no runtime
+switch; against a binding built without it every stamp is a no-op. See libe3's
+`docs/latrec.md`.
+
+### Python package installation (recommended)
+
+```
+pip3 install dapps[all]
+```
+
+The dApp can be found in the `examples` directory or it can be downloaded from this repository.
+
+### Manual installation (use only for library development)
+
+Clone the repository and install it manually with:
+
+```
+pip3 install -e ".[all]"
+```
+
+Building a distributable sdist / wheel:
+
+```
+pip install build
+python -m build         # produces dist/*.tar.gz and dist/*.whl
+pip3 install "dist/*.tar.gz[all]"
+```
+
+The wheel build uses [scikit-build-core](https://scikit-build-core.readthedocs.io/) to compile the bundled C++ extension (see *libiqsaver* below). System prerequisites: a C++17 compiler, CMake ≥ 3.16, SWIG ≥ 4.0, and [`nlohmann/json`](https://github.com/nlohmann/json) (≥ 3.11). On Debian/Ubuntu: `apt install cmake swig nlohmann-json3-dev`.
+
+### libiqsaver — standalone C++ library
+
+The `iq_saver` Python package wraps **libiqsaver**, a SigMF-compliant IQ-sample writer written in C++. The same library is also usable directly from C++ projects. To install it system-wide:
+
+```
+cd libiqsaver
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+sudo make install
+```
+
+After install:
+
+```
+pkg-config --cflags --libs libiqsaver
+# or, in CMake:
+find_package(libiqsaver REQUIRED)
+target_link_libraries(my_app PRIVATE iqsaver::iqsaver)
+```
+
+The standalone install (headers under `${CMAKE_INSTALL_PREFIX}/include/iqsaver`, library and pkg-config under `${CMAKE_INSTALL_LIBDIR}`) is independent of `pip install dapps` — both can coexist on the same machine.
+
+### Launch the Spectrum Sharing dApp example
+
+OAI should start _before_ running the dApp
+
+```python 
+python3 examples/spectrum_dapp.py
+```
+
+This dApp implements a spectrum sharing use case discussed in [our paper](https://doi.org/10.1016/j.comnet.2025.111342) ([here for the archive version](https://arxiv.org/pdf/2501.16502)).
+
+**Command-line arguments:**
+
+**Connection Configuration:**
+
+- `--link` - Specify the link layer to be used. Options: `zmq`, `posix` (default: `zmq`)
+- `--transport` - Specify the transport layer to be used. Options: `ipc`, `tcp` (default: `ipc`)
+
+**Data Collection and Control:**
+
+- `--save-iqs` - Enable data collection mode. When set, I/Q samples will be saved to disk for later analysis using SigMF
+- `--control` - Enable PRB control. When set, the dApp will actively control spectrum allocation based on detected interference. If not set, the dApp can still receive and implement control action from an external xApp
+
+**Spectrum Sensing Configuration:**
+
+- `--noise-floor-threshold` - Set the noise floor threshold (in dB) for determining the presence of incumbents and for detecting the PRBs affected. If not specified, the `--ru` profile value is used
+- `--ru` / `-ru` - Radio-unit profile (default: `usrp`) seeding the defaults of `--num-prbs`, `--num-subcarrier-spacing`, `--center-freq`, `--noise-floor-threshold`, `--fp16-beta`, `--sample-rate` and `--max-samples-per-file`. Explicit flags always win. Profiles: `usrp` (alias `x310`), `x410`, `x310-3p58`, `colosseum`, `foxconn`, `foxconn-273`, `benetel`, `rfsim`; see `src/spectrum/ru_profiles.py`. Settings a profile does not calibrate fall back to generic defaults with a warning. This replaces the former `--ota` flag
+
+**Visualization Options:**
+
+- `--energy-gui` - Enable the energy spectrum visualization GUI
+- `--iq-plotter-gui` - Enable the I/Q constellation plotter GUI
+- `--demo-gui` - Enable the demonstration GUI showing real-time spectrum occupancy
+- `--ctrl-port N` - Dashboard control port on loopback (default 5570 with `--demo-gui`, off otherwise; `0` disables). See `src/spectrum/README.md`, "Dashboard control"
+- `--show-controls` - Show tunable controls (sampling threshold) in the dashboard GUI. Only meaningful with `--demo-gui`
+- `--ground-truth LABEL` - Initial ground truth label written into IQ annotations (only used with `--save-iqs`). Updatable at runtime via the dashboard GUI when `--demo-gui` is also set. When no PRBs are detected the label is forced to `no_rfi` regardless of what is set
+
+**Radio Configuration:**
+
+- `--num-prbs` - Number of Physical Resource Blocks in the channel (default: from `--ru`, 106 for `usrp`)
+- `--num-subcarrier-spacing` - Subcarrier spacing in kHz. Use 30 for FR1 (sub-6 GHz) (default: from `--ru`, 30)
+- `--e` - Enable 3/4 FFT sampling mode. Set this flag if the gNB was started with the `-E` option
+- `--center-freq` - Center frequency in Hz (default: from `--ru`, 3.6192e9 for `usrp`)
+- `--sample-rate` - Front-end (ADC) sample rate in Hz, written as the SigMF `core:sample_rate` (default: from `--ru`; the occupied bandwidth when the profile has none)
+- `--fp16-beta` - FP16 IQ rescale factor, must match the gNB build/config (default: from `--ru`, 1/128 for USRPs and 1/2048 otherwise)
+- `--max-samples-per-file` - SigMF segment length in samples (default: one second of the write rate, `num_prbs * 12 * SCS`)
+
+**Execution Control:**
+
+- `--timed SECONDS` - Run the dApp with a time limit (in seconds). Set to 0 for no limit (default: 0)
+
+**AI/ML Model Configuration:**
+
+- `--model` - Path to a pre-trained CNN model file for spectrum classification. If not provided, uses rule-based detection
+- `--time-window` - Number of consecutive spectrum vectors to use as input for the CNN model (default: 5)
+
+**Signal Processing Parameters:**
+
+- `--moving-avg-window` - Window size (in samples) for the moving average filter used to smooth energy measurements and detect peaks in the spectrum (default: 30)
+- `--extraction-window` - Number of samples to retain after detecting an energy peak for further analysis (default: 600)
+- `--sampling-threshold` - Controls dashboard visualization rate: a new frame is rendered every N IQ batches (default: 5). Has no effect on IQ delivery from the gNB or on IQ recording to disk. Tunable at runtime via the dashboard when `--show-controls` is active
+
+**Adaptive Noise Floor Parameters:**
+
+- `--use-adaptive-noise-floor` - Enable adaptive noise floor thresholding using a per-bin median magnitude computed over a rolling history buffer, instead of a fixed noise floor threshold (default: False)
+- `--average_over_frames - Number of IQ observation frames to retain in the adaptive noise floor circular buffer. A noise floor estimate will not be produced until this many frames have been collected (default: 32)
+- `--noise-floor-threshold` - When using adaptive noise floor, the minimum SNR in dB that a bin must exceed to be considered a detection. When not using adaptive noise floor, the fixed magnitude threshold in dB above which a bin is considered active (default: 53)
+- `--embargo-timeout-secs` - Minimum time in seconds a PRB remains blocked after its last detection, regardless of the current SNR. Should be set to 1-2x the longest expected detection period to handle infrequent waveforms (default: 9.9)
+
+If you use the dApp concept and/or the framework to develop your own dApps, please cite the following paper:
+
+```text
+@article{LACAVA2025111342,
+title = {{dApps: Enabling Real-Time AI-based Open RAN Control}},
+journal = {Computer Networks},
+pages = {111342},
+year = {2025},
+issn = {1389-1286},
+doi = {https://doi.org/10.1016/j.comnet.2025.111342},
+url = {https://www.sciencedirect.com/science/article/pii/S1389128625003093},
+author = {Andrea Lacava and Leonardo Bonati and Niloofar Mohamadi and Rajeev Gangula and Florian Kaltenberger and Pedram Johari and Salvatore D’Oro and Francesca Cuomo and Michele Polese and Tommaso Melodia},
+keywords = {Open RAN, dApps, Real-time control loops, Radio Resource Management (RRM), Spectrum sharing, Positioning, Integrated Sensing and Communication (ISAC)},
+abstract = {Open Radio Access Networks (RANs) leverage disaggregated and programmable RAN functions and open interfaces to enable closed-loop, data-driven radio resource management. This is performed through custom intelligent applications on the RAN Intelligent Controllers (RICs), optimizing RAN policy scheduling, network slicing, user session management, and medium access control, among others. In this context, we have proposed dApps as a key extension of the O-RAN architecture into the real-time and user-plane domains. Deployed directly on RAN nodes, dApps access data otherwise unavailable to RICs due to privacy or timing constraints, enabling the execution of control actions within shorter time intervals. In this paper, we propose for the first time a reference architecture for dApps, defining their life cycle from deployment by the Service Management and Orchestration (SMO) to real-time control loop interactions with the RAN nodes where they are hosted. We introduce a new dApp interface, E3, along with an Application Protocol (AP) that supports structured message exchanges and extensible communication for various service models. By bridging E3 with the existing O-RAN E2 interface, we enable dApps, xApps, and rApps to coexist and coordinate. These applications can then collaborate on complex use cases and employ hierarchical control to resolve shared resource conflicts. Finally, we present and open-source a dApp framework based on OpenAirInterface (OAI). We benchmark its performance in two real-time control use cases, i.e., spectrum sharing and positioning in a 5th generation (5G) Next Generation Node Base (gNB) scenario. Our experimental results show that standardized real-time control loops via dApps are feasible, achieving average control latency below 450microseconds and allowing optimal use of shared spectral resources.}
+}
+```
+
+## E3 Service Model Generator
+
+The `tools/generate_sm.sh` script helps you create skeleton code for new E3 Service Models. This automates the creation of boilerplate code for both the agent (OAI) and dApp sides.
+
+### Usage
+
+**Interactive mode (recommended for first-time users):**
+```bash
+cd tools
+./generate_sm.sh --interactive
+```
+
+**Command-line mode:**
+```bash
+./generate_sm.sh -n <sm_name> -a <asn_file> [OPTIONS]
+```
+
+**Options:**
+- `-n, --name NAME` - Service Model name (required)
+- `-a, --asn-file FILE` - ASN.1 definition file path (required)
+- `-t, --target TARGET` - Target: `agent`, `dapp`, or `both` (default: both)
+- `-r, --ran-functions IDS` - Comma-separated RAN function IDs (e.g., 2,3,4)
+- `-f, --format FORMAT` - Encoding format: `asn1` or `json` (default: asn1)
+- `--agent-root PATH` - Path to OAI repository (or set `AGENT_ROOT` env var)
+- `-i, --interactive` - Interactive mode with prompts
+- `-h, --help` - Show help message
+
+**Examples:**
+```bash
+# Generate both agent and dApp code for positioning SM
+cd tools
+./generate_sm.sh -n positioning -a positioning.asn -r 2 --agent-root /path/to/spear-openairinterface5g
+
+# Generate only dApp code for KPM SM
+./generate_sm.sh -n kpm -a kpm.asn -r 3,4 -t dapp
+
+# Interactive mode
+./generate_sm.sh --interactive
+```
+
+**Generated Structure:**
+
+For agent-side (when `--target agent` or `both`):
+```
+spear-openairinterface5g/openair2/E3AP/service_models/<sm_name>_sm/
+├── <sm_name>_sm.h          # Main SM header
+├── <sm_name>_sm.c          # Main SM implementation
+├── <sm_name>_enc.h/.c      # Encoding functions
+├── <sm_name>_dec.h/.c      # Decoding functions
+├── CMakeLists.txt          # Build configuration
+└── MESSAGES/
+    ├── CMakeLists.txt
+    └── ASN1/V1/
+        ├── e3sm_<sm_name>.asn
+        └── e3sm_<sm_name>.cmake
+```
+
+For dApp-side (when `--target dapp` or `both`):
+```
+dApp-library/src/<sm_name>/
+├── __init__.py
+├── <sm_name>_dapp.py       # Main dApp implementation
+└── defs/
+    └── e3sm_<sm_name>.asn  # ASN.1 schema
+```
+
+### Contributing
+
+Contributions are welcome, but they must follow the guidelines in [CONTRIBUTING.md](./CONTRIBUTING.md)
