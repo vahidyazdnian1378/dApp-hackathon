@@ -549,7 +549,7 @@ class SpectrumSharingDApp(DApp):
             f"symbols when enabled)"
         )
 
-        self._detector_run_interval = 4
+        self._detector_run_interval = 1
         self._detector_run_counter = 0
         self._ind_worker_thread = threading.Thread(
             target=self._indication_worker,
